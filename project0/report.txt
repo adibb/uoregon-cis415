@@ -1,0 +1,24 @@
+Author: Alexander Dibb
+Date: 17/04/2017
+
+REPORT:
+
+This file contains a brief summary of cogent details regarding 
+Project 0 and the code I've written for it.
+
+Point 1 - Warnings
+Multiple warnings appear when independently compiling object files for
+date.c and tldlist.c due to their use of functions from stdlib.h and 
+string.h - both of which are included in tldmonitor.h and thus can be
+referenced. Normally I'd add them to the headers, but we're not supposed
+to edit those. Hence the warnings.
+
+Point 2 - Undefined Behavior
+The Date mechanics sanitize for syntax, but do not check if the 
+actual values of the dates are valid - ie, that they are real and
+can be found on a calendar, or that they are actually digits.
+
+Point 3 - Implementation
+I'm not happy with how I handled date creation and want to replace
+it with memcpy, but might not have the time. The AVL tree is coming down
+to the wire.
