@@ -7,6 +7,9 @@ typedef struct tldlist TLDList;
 typedef struct tldnode TLDNode;
 typedef struct tlditerator TLDIterator;
 
+#include <stdlib.h>
+#include <string.h>
+
 /*
  * tldlist_create generates a list structure for storing counts against
  * top level domains (TLDs)

@@ -1,6 +1,9 @@
 #ifndef _DATE_H_INCLUDED_
 #define _DATE_H_INCLUDED_
 
+#include <stdlib.h>
+#include <string.h>
+
 typedef struct date Date;
 
 /*
