@@ -1,4 +1,3 @@
-#include <malloc.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -65,12 +64,17 @@ Argparse *ParseArguments(int argc, char*argv[])
 		switch(mode)
 		{
 			case 0:
-				if((strcmp("--message",arg)==0) || strcmp("-M",arg)==0)
+				if((strcmp("-message",arg)==0) || strcmp("-m",arg)==0)
 				{
 					mode = 1;
 				}
-				else if(strcmp("-",arg)==0)
+				else if((strcmp("-threadcount",arg)==0) || (strcmp("-c",arg)==0))
 				{
+					mode = 2;
+				}
+				else if((strcmp("-timer",arg)==0) || (strcmp("-t",arg)==0))
+				{
+					mode = 3;
 				}
 				else
 				{
@@ -82,13 +86,25 @@ Argparse *ParseArguments(int argc, char*argv[])
 				message = arg;
 				mode =0;
 				break;
+			case 2:
+				thread_count = atoi(arg);
+				mode =0;
+				break;
+			case 3: 
+				timer_count_lower = atoi(arg);
+				mode = 4;
+				break;
+			case 4:
+				timer_count_upper = atoi(arg);
+				mode = 0;
+				break;
 			default:
 				fprintf(stderr,"Invalid mode state for parser: %d \n",mode);
 				exit(mode);
 		}									
 	}
 	
-	return malloc_Argparse(thread_count,timer_count_upper,timer_count_lower,arg);	
+	return malloc_Argparse(thread_count,timer_count_upper,timer_count_lower,message);	
 }
 
 void print_Argparse(Argparse *args)
@@ -153,12 +169,22 @@ ThreadContainer *create_threads(int thread_count, void *argument)
 	ThreadContainer *ptr = malloc(sizeof(ThreadContainer)*thread_count);
 
 	// start a lot of threads here...
+	int i;
+	for (i = 0; i < thread_count; i++){
+		pthread_create(&(ptr[i].thread), NULL, ThreadProc, &(ptr[i]));
+	}
+
 	return ptr;
 }
 
 void stop_threads(int thread_count, ThreadContainer *ptr)
 {
-	// stop all the threads here.
+	// stop all the threads
+	int i;
+	for (i = 0; i < thread_count; i++){
+		pthread_cancel(ptr[i].thread);
+	}
+
 	free(ptr);
 }
 int main(int argc, char *argv[])
