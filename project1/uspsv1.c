@@ -58,7 +58,7 @@ int main(int argc, char *argv[]){
         int bytes_read;
         for (i = 0; i < n; i++){
             bytes_read = p1getline(fd, buffer, BUFFER_SIZE);
-            lines[i] = (char *) malloc(bytes_read);
+            lines[i] = (char *) malloc(bytes_read + 1);
             p1strcpy(lines[i], buffer);
         }
 
@@ -88,6 +88,10 @@ int main(int argc, char *argv[]){
 
             // If we returned here, then starting the process failed
             p1perror(2, "Could not execute command");
+            exit(EXIT_FAILURE);
+        } else if (pid[i] < 0) {
+            // Error on the fork attempt
+            p1perror(2, "Could not fork");
             exit(EXIT_FAILURE);
         }
 
