@@ -22,6 +22,9 @@
 // Globals
 const int BUFFER_SIZE = 512;
 
+// Forward declarations
+char **split(char *);
+
 // Main program
 int main(int argc, char *argv[]){
     int i;
@@ -68,21 +71,27 @@ int main(int argc, char *argv[]){
         exit(EXIT_FAILURE);
     }
 
-    for (i = 0; i < n; i++){
-        printf("%s", lines[i]);
-    }
-
-/*
-    // Fork each line into a new process, freeing each element
+    // Fork each line into a new process, freeing each line
     // as it goes
     pid_t pid[n];
     for (i = 0; i < n; i++){
+        // Fork the proces
         pid[i] = fork();
+
+        // Check if the running process is the child
         if (pid[i] == 0){
-            
-            p1perror(2, "Could not run process");
+            // Split the line into words
+            char **words = split(lines[i]);
+
+            // Execute the command from the words
+            execvp(words[0], words);
+
+            // If we returned here, then starting the process failed
+            p1perror(2, "Could not execute command");
             exit(EXIT_FAILURE);
         }
+
+        // Free this line while we're here
         free(lines[i]);
     }
 
@@ -90,17 +99,19 @@ int main(int argc, char *argv[]){
     free(lines);
 
     // Wait for child processes to finish
-    int status;
-    for (i = 0; i < n; i++){
-        waitpid(pid[i], &status, 1);
-    }*/
+    int signal;
+    while (n > 0){
+        wait(&signal);
+        n--;
+    }
 
     // Exit successfully.
     exit(EXIT_SUCCESS);
 }
 
-// Returns the contents of the line split into words
-char **split(char line[]){
+// Returns the contents of the line split by non-quoted whitespace,
+// terminated with a NULL
+char **split(char *line){
     // Find out how many words we're working with
     int i = 0, word_count = 0;
     char temp[BUFFER_SIZE];
@@ -112,14 +123,27 @@ char **split(char line[]){
     }
 
     // Set up the 2D array for the words
-    words = (char **) malloc(sizeof(char *) * word_count);
+    words = (char **) malloc(sizeof(char *) * (word_count + 1));
     int b_index = 0;
     for (i = 0; i < word_count; i++){
+        // Read in word to excessively sized string
         char *w = (char *) malloc(BUFFER_SIZE);
         b_index = p1getword(line, b_index, w);
-        w = (char *) realloc(w, p1strlen(w));
+
+        // Get length, and prune newlines with it
+        int wlen = p1strlen(w);
+        if (w[wlen - 1] == '\n'){
+            w[wlen - 1] = '\0';
+            wlen--;
+        }
+        
+        // Shrink allocated memory to what we actually need
+        w = (char *) realloc(w, wlen);
         words[i] = w;
     }
+
+    // Null-terminate it
+    words[word_count] = NULL;
 
     return words;
 }
