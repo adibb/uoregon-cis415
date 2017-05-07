@@ -5,7 +5,8 @@
  * 
  * This is my own work, except for the 'p1fxns.h' library, which was 
  * provided by Professor Joe Sventek, and part of the main program
- * for waiting on child processes, which is from StackOverflow.
+ * for waiting on child processes and syncing the 'ready' variable 
+ * with semaphores, which are from StackOverflow.
  * 
  */
 
@@ -18,16 +19,19 @@
 #include <fcntl.h>
 #include <errno.h>
 #include <signal.h>
+#include <semaphore.h>
 #include "p1fxns.h"
 
-// Globals EVERYWHERE
+// Globals EVERYWHERE I'M SO SICK OF RACE CONDITIONS HOLY SHIT
 #define BUFFER_SIZE 512
 #define UNUSED __attribute__((unused))
-pid_t parent_pid;
+#define SEM_NAME "mutex"
 int n = 0;
-volatile int ready = 0;
+int ready = 0;
 char **lines;
 int line_index;
+pid_t parent_pid;
+sem_t *mx;
 int i;   // Throwaway for loops
 
 // Forward declarations
@@ -90,6 +94,9 @@ int main(int argc, char *argv[]){
         exit(EXIT_FAILURE);
     }
 
+    // Open the semaphore
+    //mx = sem_open(SEM_NAME, O_CREAT, S_IWGRP|S_IRGRP|S_IWUSR|S_IRUSR, 1);
+
     // Fork each line into a new process
     pid_t pid[n];
     for (i = 0; i < n; i++){
@@ -101,7 +108,7 @@ int main(int argc, char *argv[]){
 
             // !!! CHILD PROCESS CODE !!!
             line_index = i;
-
+            //mx = sem_open(SEM_NAME, 0);
             kill(parent_pid, SIGUSR1);
 
         } else if (pid[i] < 0) {
@@ -115,8 +122,7 @@ int main(int argc, char *argv[]){
 
     // Wait for all processes to be ready before starting them
     while (ready < n){
-        pause();
-        ready++;
+        sleep(1);
     }
 
     // Start all processes
@@ -135,7 +141,6 @@ int main(int argc, char *argv[]){
         free(lines[i]);
     }
     free(lines);
-
 
     // Exit successfully.
     exit(EXIT_SUCCESS);
@@ -182,9 +187,11 @@ char **split(char *line){
 
 // Signal handler for the SIGUSR1
 void onusr1(UNUSED int signal){
-    if ((getpid() == parent_pid) && (ready < n)){
-
-    } else {
+    if (getpid() == parent_pid){
+        //sem_wait(mx);
+        ready++;
+        //sem_post(mx);
+    } else if (getppid() == parent_pid) {
         // Split the line into words
         char **words = split(lines[line_index]);
 

@@ -1,5 +1,5 @@
 CC = gcc
-CFLAGS = -W -Wall -g 
+CFLAGS = -W -Wall -g -lpthread
 SIDE_SOURCES = p1fxns.c
 
 all: uspsv1 uspsv2
