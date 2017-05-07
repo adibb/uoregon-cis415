@@ -1,0 +1,50 @@
+Author: Alexander Dibb
+Date: 05/08/2017
+
+REPORT:
+
+This file contains a brief summary of cogent details regarding
+Project 1 and the code I've written for it. 
+
+USPSv1:
+
+As far as I can tell, this functions fine. GDB and Valgrind
+report no issues with it. I'm not happy with how complicated
+the main function is. Were I redoing the project, I would
+(among many, MANY other things) break it apart some. 
+
+USPSv2:
+
+Currently the final version (I *know*), there is only one major
+issue that I can identify but not correct. While both GDB and 
+Valgrind report no problems, executing the program results in an
+inexplicable number of orphaned and zombie processes - even though
+fork() is never called more than the number of child processes AND
+all those child processes complete. It's baffling. Probably to do 
+with that thrice-damned 16-hour-in-making SIGUSR1 pause-everything
+nonsense at the very start.
+
+USPSv3:
+
+WIP
+
+USPSv4:
+
+N/A.
+
+Overall:
+
+On the one hand, I flubbed this badly. I left it too long and 
+let midterms week blind me to the fact that this project was due 
+immediately after. I remember trying to work on it earlier, but 
+chose to put it off because we hadn't covered processes at the
+time. I SHOULD NOT HAVE DONE THAT. I'm sorry. 
+
+On the other hand. I'm taking four 400-level CIS courses in the 
+same quarter and fighting chronic insomnia on top of that. My 
+circadian rhythm is a bad joke at this point. I'd ask for leniency
+in light of that, but I think I already know the answer. I'll figure 
+something out. 
+
+But really. Monday after the midterm? What were you expecting? God,
+I hope the curve saves me. 

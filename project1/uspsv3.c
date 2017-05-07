@@ -24,7 +24,6 @@
 // Globals EVERYWHERE I'M SO SICK OF RACE CONDITIONS HOLY SHIT
 #define BUFFER_SIZE 512
 #define UNUSED __attribute__((unused))
-#define SEM_NAME "mutex"
 int n = 0;
 int ready = 0;
 char **lines;
@@ -40,49 +39,71 @@ void onusr1(UNUSED int);
 
 // Main program
 int main(int argc, char *argv[]){
-    int fd;
+    int fd = 0;
+    int quantum = -1;
     parent_pid = getpid();
 
-    if ((argc == 1) || (0)){ // Placeholder for quantum condition
-        errno = EINVAL;
-        p1perror(2, "No workload file specified");
-        exit(EXIT_FAILURE);
+    // Check for arguments
+    for (i = 1; i < argc; i++){
+        printf("%i\n", p1strchr(argv[i], '-'));
+        if (p1strchr(argv[i], '-') == 0){
+            int offset = p1strchr(argv[i], '=') + 1;
+            quantum = p1atoi(argv[i]+offset);
+            if (quantum == 0){
+                p1perror(2, "Bad value for quantum");
+                exit(EXIT_FAILURE);
+            }
+        } else {
+            int temp;
+            if ((temp = open(argv[i], O_RDONLY)) >= 0){
+                fd = temp;
+            } else {
+                p1perror(2, "Could not open specified file");
+                exit(EXIT_FAILURE);
+            }
+        }
+    }
+
+    // If quantum is -1 by now, then it wasn't set by user
+    if (quantum == -1){
+        char *temp;
+        if ((temp = getenv("USPS_QUANTUM_MSEC")) == NULL){
+            errno = EINVAL;
+            p1perror(2, "Could not find env value for quantum");
+            exit(EXIT_FAILURE);
+        } else {
+            quantum = p1atoi(temp);
+        }
     }
 
     // !!! PARENT PROCESS - STARTUP !!!
+    char buffer[BUFFER_SIZE];
 
-    // Open the workload file and read out the lines
-    if ((fd = open(argv[argc - 1], O_RDONLY)) >= 0) {
-        // File opened successfully
-        char buffer[BUFFER_SIZE];
-
-        // Get the number of lines in the file
+    // Get the number of lines in the file
+    if (fd != 0){
         while(p1getline(fd, buffer, BUFFER_SIZE) > 0){
             n++;
         }
-        
-        // Malloc for the lines array
-        lines = (char **) malloc(sizeof(char *) * n);
-
-        // Return to the start of the file
         lseek(fd, 0, SEEK_SET);
-
-        // Read the file into the lines array
-        int bytes_read;
-        for (i = 0; i < n; i++){
-            bytes_read = p1getline(fd, buffer, BUFFER_SIZE);
-            lines[i] = (char *) malloc(bytes_read + 1);
-            p1strcpy(lines[i], buffer);
-        }
-
-        // Done with the file, so close it.
-        close(fd);
-
     } else {
-        // Workload file failed to open
-        p1perror(2, "Could not open the workload text");
-        exit(EXIT_FAILURE);
+        p1getline(fd, buffer, BUFFER_SIZE);
+        n = p1atoi(buffer);
     }
+        
+    // Malloc for the lines array
+    lines = (char **) malloc(sizeof(char *) * n);
+
+    // Read the file into the lines array
+    int bytes_read;
+    for (i = 0; i < n; i++){
+        bytes_read = p1getline(fd, buffer, BUFFER_SIZE);
+        lines[i] = (char *) malloc(bytes_read + 1); // for '/0'
+        p1strcpy(lines[i], buffer);
+    }
+
+    // Done with the file, so close it if not stdin
+    if (fd != 0)
+        close(fd);
 
     // !!! PARENT PROCESS - FILE WAS READ !!!
 
