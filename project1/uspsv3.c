@@ -4,9 +4,8 @@
  * Assignment: CIS 415 Project 1
  * 
  * This is my own work, except for the 'p1fxns.h' library, which was 
- * provided by Professor Joe Sventek, and part of the main program
- * for waiting on child processes and syncing the 'ready' variable 
- * with semaphores, which are from StackOverflow.
+ * provided by Professor Joe Sventek, and part of the SIGCHLD handler
+ * that crunches the children array.
  * 
  */
 
@@ -19,16 +18,19 @@
 #include <fcntl.h>
 #include <errno.h>
 #include <signal.h>
+#include <time.h>
 #include "p1fxns.h"
 
-// Globals EVERYWHERE I'M SO SICK OF RACE CONDITIONS HOLY SHIT
+// Globals EVERYWHERE so they can be used in signal handlers because
+// I'm bad at programming
 #define BUFFER_SIZE 512
 #define UNUSED __attribute__((unused))
 int n = 0;
-int ready = 0;
+volatile int ready = 0;
 char **lines;
-int line_index;
+int p_line;
 pid_t parent_pid;
+pid_t *children;
 int i;   // Throwaway for loops
 
 // Forward declarations
@@ -36,6 +38,8 @@ char **split(char *);
 
 // Signal handlers
 void onusr1(UNUSED int);
+void onalrm(UNUSED int);
+void onchld(UNUSED int);
 
 // Main program
 int main(int argc, char *argv[]){
@@ -113,21 +117,27 @@ int main(int argc, char *argv[]){
         exit(EXIT_FAILURE);
     }
 
+    // Attach the signal handler for SIGCHLD
+    if (signal(SIGCHLD, onchld) == SIG_ERR){
+        p1perror(2, "Could not attach SIGCHLD handler");
+        exit(EXIT_FAILURE);
+    }
+
     // Fork each line into a new process
-    pid_t pid[n];
+    children = (pid_t *) malloc(sizeof(pid_t) * n);
     for (i = 0; i < n; i++){
         // Fork the process
-        pid[i] = fork();
+        children[i] = fork();
 
         // Check if the running process is the child
-        if (pid[i] == 0){
+        if (children[i] == 0){
 
             // !!! CHILD PROCESS CODE !!!
-            line_index = i;
+            p_line = i;
             //mx = sem_open(SEM_NAME, 0);
             kill(parent_pid, SIGUSR1);
 
-        } else if (pid[i] < 0) {
+        } else if (children[i] < 0) {
             // Error on the fork attempt
             p1perror(2, "Could not fork");
             exit(EXIT_FAILURE);
@@ -137,29 +147,23 @@ int main(int argc, char *argv[]){
     // !!! PARENT CODE WITH ALL CHILDREN STARTED AND ONLY STARTED !!!
 
     // Wait for all processes to be ready before starting them
+    struct timespec tm = {0, 20000000};
     while (ready < n){
-        sleep(1); // Sloppy, replace with something better later
+        (void) nanosleep(&tm, NULL);
     }
 
     // Start all processes
     for (i = 0; i < n; i++){
-        kill(pid[i], SIGUSR1);
+        kill(children[i], SIGUSR1);
     }
 
-    // Stop all processes
-    for (i = 0; i < n; i++){
-        kill(pid[i], SIGSTOP);
-    }
-
-    // Continue all processes
-    for (i = 0; i < n; i++){
-        kill(pid[i], SIGCONT);
-    }
+    // Start the round-robin schedule
+    p_line = 0;
+    
 
     // Wait for child processes to finish
     while (n > 0){
-        (void) wait(NULL);
-        n--;
+        (void) nanosleep(&tm, NULL);
     }
 
     // Free the lines array
@@ -167,6 +171,9 @@ int main(int argc, char *argv[]){
         free(lines[i]);
     }
     free(lines);
+
+    // Free the children!
+    free(children);
 
     // Exit successfully.
     exit(EXIT_SUCCESS);
@@ -217,7 +224,7 @@ void onusr1(UNUSED int signal){
         ready++;
     } else if (getppid() == parent_pid) {
         // Split the line into words
-        char **words = split(lines[line_index]);
+        char **words = split(lines[p_line]);
 
         // Execute the command from the words
         execvp(words[0], words);
@@ -227,4 +234,20 @@ void onusr1(UNUSED int signal){
         exit(EXIT_FAILURE);
 
     }
+}
+
+// Signal handler for the SIGALRM
+void onalrm(UNUSED int signal){
+    p_line = (p_line + 1) % n;
+}
+
+// Signal handler for the SIGCHLD
+void onchld(UNUSED int signal){
+    // Child has terminated, so crunch it from the array with memmove
+    // Wait, is memmove legal? It's in the LPM, so... probably? Eh.
+    if (p_line < n-1){
+        memmove(&children[p_line], &children[p_line+1], 
+                sizeof(children[0]) * ((n-1) - p_line));
+    }
+    n--;
 }
