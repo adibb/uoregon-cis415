@@ -12,9 +12,11 @@
 #include <stdlib.h>
 #include <unistd.h> 
 #include <stdio.h>
+#include <string.h>     // Just for memmove! I swear!
 #include <sys/stat.h>   // For file access modes
 #include <sys/types.h>
 #include <sys/wait.h>
+#include <sys/time.h>
 #include <fcntl.h>
 #include <errno.h>
 #include <signal.h>
@@ -123,6 +125,12 @@ int main(int argc, char *argv[]){
         exit(EXIT_FAILURE);
     }
 
+    // Attach the signal handler for SIGALRM
+    if (signal(SIGALRM, onalrm) == SIG_ERR){
+        p1perror(2, "Could not attach SIGALRM handler");
+        exit(EXIT_FAILURE);
+    }
+
     // Fork each line into a new process
     children = (pid_t *) malloc(sizeof(pid_t) * n);
     for (i = 0; i < n; i++){
@@ -134,7 +142,6 @@ int main(int argc, char *argv[]){
 
             // !!! CHILD PROCESS CODE !!!
             p_line = i;
-            //mx = sem_open(SEM_NAME, 0);
             kill(parent_pid, SIGUSR1);
 
         } else if (children[i] < 0) {
@@ -152,19 +159,31 @@ int main(int argc, char *argv[]){
         (void) nanosleep(&tm, NULL);
     }
 
-    // Start all processes
+    // Start all processes off with their own thing, then suspend 
+    // for round-robin scheduling
     for (i = 0; i < n; i++){
         kill(children[i], SIGUSR1);
+        kill(children[i], SIGSTOP);
     }
 
     // Start the round-robin schedule
     p_line = 0;
-    
+    struct itimerval rr_timer;
+    rr_timer.it_value.tv_sec = 0;
+    rr_timer.it_value.tv_usec = quantum * 1000;
+    rr_timer.it_interval.tv_sec = 0;
+    rr_timer.it_interval.tv_usec = quantum * 1000;
 
-    // Wait for child processes to finish
+    // Scheduling timer starts
+    setitimer(ITIMER_REAL, &rr_timer, NULL);
     while (n > 0){
-        (void) nanosleep(&tm, NULL);
+        kill(children[p_line], SIGCONT);
+        pause();
     }
+    rr_timer.it_value.tv_usec = 0;
+    setitimer(ITIMER_REAL, &rr_timer, NULL);
+
+    printf("Freeing lines\n");
 
     // Free the lines array
     for (i = 0; i < n; i++){
@@ -238,6 +257,8 @@ void onusr1(UNUSED int signal){
 
 // Signal handler for the SIGALRM
 void onalrm(UNUSED int signal){
+    printf("Stopping PID: %i\n", (int) children[p_line]);
+    kill(children[p_line], SIGSTOP);
     p_line = (p_line + 1) % n;
 }
 
@@ -245,9 +266,19 @@ void onalrm(UNUSED int signal){
 void onchld(UNUSED int signal){
     // Child has terminated, so crunch it from the array with memmove
     // Wait, is memmove legal? It's in the LPM, so... probably? Eh.
-    if (p_line < n-1){
-        memmove(&children[p_line], &children[p_line+1], 
-                sizeof(children[0]) * ((n-1) - p_line));
+
+    int status;
+    pid_t culprit = waitpid(children[p_line], &status, WNOHANG);
+
+    if (culprit == 0) {
+        // Do nothing - just a SIGCONT or SIGSTOP, probably
+    } else if (culprit == children[p_line]) {
+        // Child terminated, cleanup
+        printf("Cleaning up: %i\n", children[p_line]);
+        if (p_line < n-1){
+            memmove(&children[p_line], &children[p_line+1], 
+                    sizeof(children[0]) * ((n-1) - p_line));
+        }
+        n--;
     }
-    n--;
 }

@@ -15,22 +15,36 @@ the main function is. Were I redoing the project, I would
 
 USPSv2:
 
-Currently the final version (I *know*), there is only one major
-issue that I can identify but not correct. While both GDB and 
-Valgrind report no problems, executing the program results in an
-inexplicable number of orphaned and zombie processes - even though
-fork() is never called more than the number of child processes AND
-all those child processes complete. It's baffling. Probably to do 
-with that thrice-damned 16-hour-in-making SIGUSR1 pause-everything
-nonsense at the very start.
+Not my finest moment, I'm afraid. (See: THIS WHOLE PROJECT.) 
+There is only one major issue that I can identify but not 
+correct. While both GDB and Valgrind report no problems, executing 
+the program results in an inexplicable number of orphaned and zombie 
+processes - even though fork() is never called more than the number 
+of child processes AND all those child processes complete. It's 
+baffling. Probably to do with that thrice-damned 16-hour-in-making 
+SIGUSR1 pause-everything nonsense after all the forks. Yecch.
 
 USPSv3:
 
-WIP
+Made a few quality changes. Not enough to really make it, but a few
+things like swapping nanosleep() for sleep(). The round robin 
+scheduler works, but it's rickety. There's gotta be a race condition
+somewhere in there, probably with all the SIGCHLDs floating around. 
+Still have that problem with zombie processes, and if you run a lot
+of really fast processes they don't all get cleaned up right and the
+USPS deadlocks. Happens reliably if you include a bunch of 'echo' 
+commands in the workload.
+
+Valgrind is noooooot happy with it. Neither am I, really. I get 
+memory leaks from blocks I freed in earlier versions and didn't 
+touch the code for them. I probably did something I thought was 
+clever and broke everything else in doing so. 
 
 USPSv4:
 
-N/A.
+N/A. Just not enough time. I chose to try and polish off USPSv3 the
+best I could rather than build an outright bad v4 on already shaky
+ground. 
 
 Overall:
 
@@ -45,6 +59,3 @@ same quarter and fighting chronic insomnia on top of that. My
 circadian rhythm is a bad joke at this point. I'd ask for leniency
 in light of that, but I think I already know the answer. I'll figure 
 something out. 
-
-But really. Monday after the midterm? What were you expecting? God,
-I hope the curve saves me. 

@@ -1,4 +1,4 @@
 echo "BLAARGH"
-echo "Hello, world!"
+sleep 4
 sleep 2
-echo "NANANANANA"
+sleep 3
