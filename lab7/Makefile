@@ -1,4 +1,4 @@
-CFLAGS=-W -Wall -g -pthread -std=c11
+CFLAGS=-W -Wall -g -pthread
 
 all: message message2
 

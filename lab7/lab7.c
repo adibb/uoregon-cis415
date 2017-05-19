@@ -19,6 +19,7 @@ pthread_mutex_t mutex_lock;
 
 
 int ERROR_LOGGING_ON= 1;
+int INFO_LOGGING_ON= 1;
 
 int memory_size = 0;
 volatile char *memory = "StartingMessage";
@@ -30,7 +31,8 @@ void set_message(char *message)
 
 char *get_message()
 {
-	char *returnValue = memory;
+    char *returnValue;
+	returnValue = (char *) memory;
 	return returnValue;
 }
 
@@ -38,16 +40,17 @@ void log_time(FILE *file)
 {
 
 	// http://stackoverflow.com/questions/3756323/getting-the-current-time-in-milliseconds
-    long            ms; // Milliseconds
-    time_t          s;  // Second
+    //long            ms; // Milliseconds
+    //time_t          s;  // Second
     
-struct timeval  tv;
-gettimeofday(&tv, NULL);
+    struct timeval  tv;
+    gettimeofday(&tv, NULL);
 
-double time_in_mill =    (tv.tv_sec) * 1000 + (tv.tv_usec) / 1000 ; // convert tv_sec & tv_usec to millisecond
+    double time_in_mill =    
+        (tv.tv_sec) * 1000 + (tv.tv_usec) / 1000 ; // convert tv_sec & tv_usec to millisecond
 
 
-    fprintf(file,"%d", time_in_mill);
+    fprintf(file,"%f\n", time_in_mill);
 }
 
 void Error(const char* format, ...)
@@ -69,6 +72,25 @@ void Error(const char* format, ...)
     
 }
 
+void Info(const char* format, ...)
+{
+    if (!INFO_LOGGING_ON)
+    {
+        return;
+    }
+    
+    va_list argptr;
+    va_start(argptr, format);
+    
+    fprintf(stdout,"INFO :");
+    log_time(stdout);
+    fprintf(stdout,"\n");
+    vfprintf(stdout,format, argptr);
+    fprintf(stdout,"\n");
+    
+    va_end(argptr);
+}
+
 void *pthread_proc(void *ptr)
 {	
 	char *message = (char*)ptr;
@@ -86,16 +108,23 @@ void *pthread_proc(void *ptr)
 	int exit_count = 1000;
 	while(exit_count-- > 0)
 	{
+	    pthread_mutex_lock(&mutex_lock);
 		set_message(message);
+		//pthread_mutex_unlock(&mutex_lock);
+		
 		usleep(1);
+		
+		//pthread_mutex_lock(&mutex_lock);
 		char *temp = get_message();
+		pthread_mutex_unlock(&mutex_lock);
+		
 		if(strcmp(message,temp)==0)
 		{
-			//printf("Messages equal: %s\n",temp);
+			Error("Messages equal: %s\n",temp);
 		}
 		else
 		{
-			printf("Messages are NOT equal: %s, %s \n",message, temp);
+			Error("Messages are NOT equal: %s, %s \n",message, temp);
 		}
 	}
 	return NULL;
@@ -111,7 +140,7 @@ void create_threads()
 	for (i = 0; i < thread_count; i++)
 	{
 		pthread_create(&pthreads[i],NULL,pthread_proc,(void*)messages[i]);
-		printf("Creating Thread: %d\n",pthreads[i]);
+		Error("Creating Thread: %u\n", (unsigned int) pthreads[i]);
 	}
 }
 
@@ -122,16 +151,16 @@ void wait_for_threads_to_exit()
 	int i = 0;
 	for (i = 0; i < thread_count; i++)
 	{
-		printf("Waiting for thread to join %d\n", pthreads[i]);
+		Error("Waiting for thread to join %u\n", (unsigned int) pthreads[i]);
 		pthread_join(pthreads[i],&returnValue);
 	}
 }
 
-int main(int argc, char *argv[])
+int main()
 {
 	log_time(stdout);
-	//create_threads();
+	create_threads();
 	
-	//wait_for_threads_to_exit();
+	wait_for_threads_to_exit();
 	return 0;
 }
