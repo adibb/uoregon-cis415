@@ -14,34 +14,37 @@
 /*------------------------Included Headers-------------------------*/
 /*-----------------------------------------------------------------*/
 
-// For logging
+/* For logging */ 
 #include <stdio.h>
 
-// For threads
+/* For atexit functionality */
+#include <stdlib.h>
+
+/* For threads */
 #include <pthread.h>
 
-// For argument parsing in the logging functions
+/* For argument parsing in the logging functions */
 #include <stdarg.h>
 
-// For storing incoming and outgoing packets on nonblocking calls
+/* For storing incoming and outgoing packets on nonblocking calls */
 #include "BoundedBuffer.h"
 
-// For the packet descriptors themselves
+/* For the packet descriptors themselves */
 #include "packetdescriptor.h"
 
-// For the network gateway to send/receive packets
+/* For the network gateway to send/receive packets */
 #include "networkdevice.h"
 
-// For creating and utilizing the Free Packet Descriptor Store
+/* For creating and utilizing the Free Packet Descriptor Store */
 #include "freepacketdescriptorstore__full.h"
 
-// For initializing the Free Packet Descriptor Store
+/* For initializing the Free Packet Descriptor Store */
 #include "packetdescriptorcreator.h"
 
-// For operating the network device
+/* For operating the network device */
 #include "networkdevice.h"
 
-// For distinguishing between different client applications
+/* For distinguishing between different client applications */
 #include "pid.h"
 
 /*-----------------------------------------------------------------*/
@@ -53,17 +56,28 @@
 
 /* Forward declarations of private functions */
 
+/* Locate a client's buffer based on PID */
+int find_client(PID);
+
 /* Thread functions */
 void *snd_func(void *);
-void *rcv_func(void *);
+void *rcv_listen(void *);
+void *rcv_process(void *);
+void *rcv_upkeep(void *);
 
 /* Logging functions */
 void log_info(const char *, ...);
 void log_err(const char *, ...);
 
+/* Cleanup function */
+void cleanup(void);
+
 /*-----------------------------------------------------------------*/
 /*----------------------------Globals------------------------------*/
 /*-----------------------------------------------------------------*/
+
+/* UNUSED qualifier */
+#define UNUSED __attribute__((unused))
 
 /* Location of the Free Packet Descriptor Store */
 FreePacketDescriptorStore *FPDS;
@@ -71,19 +85,64 @@ FreePacketDescriptorStore *FPDS;
 /* Location of the Network Device */
 NetworkDevice *ND;
 
-/* Pointers to sending and receiving threads */
-pthread_t *SND;
-pthread_t *RCV;
+/*
+ * Thread IDs for all threads used
+ * 
+ * SND sends packets from the SND_BUF buffer out onto the network
+ * 
+ * RCV_LISTEN listens to the network and places packets into an 
+ *     intermediate buffer
+ * 
+ * RCV_PROCESS takes packets from the intermediate buffer RCV_TEMP 
+ *     and places them into the right GET_BUF[] element
+ * 
+ * RCV_UPKEEP maintains the buffer RCV_PDS that the RCV_LISTEN thread
+ *     uses to register new packet descriptors quickly.
+ */
+pthread_t SND;
+pthread_t RCV_LISTEN;
+pthread_t RCV_PROCESS;
+pthread_t RCV_UPKEEP;
 
-/* Pointers for send and receive bounded queues */
+/*
+ * Pointers for bounded buffers
+ * 
+ * SND_BUF holds the queued packet descriptors to be sent out
+ * 
+ * GET_BUF[] holds the array of queued packet descriptors awaiting 
+ *     pickup from their application
+ * 
+ * RCV_TEMP holds the packets waiting for sorting by the RCV_PROCESS
+ *     thread
+ * 
+ * RCV_PDS holds the reserved packet descriptors ready for use by
+ *     the RCV thread listening to the network, so it doesn't need to
+ *     wait on the FPDS to release one
+ */
 BoundedBuffer *SND_BUF;
-BoundedBuffer *RCV_BUF[MAX_PID];
+BoundedBuffer *GET_BUF[MAX_PID];
+BoundedBuffer *RCV_TEMP;
+BoundedBuffer *RCV_PDS;
+
+/* Size limitations for bounded buffers */
+/* DEVNOTE: Make sure, if changing, that the totals never exceed the 
+   amount available in the FPDS. */
+const int SND_SIZE          = 10;
+const int GET_SIZE          = 2; /* this * MAX_PID possible */
+const int RCV_TEMP_SIZE     = 3;
+const int RCV_PDS_SIZE      = 3;
+
+/* Array of client PIDs */
+PID CLIENTS[MAX_PID];
 
 /* Pointer for the packet descriptor waiting for the network */
 PacketDescriptor *DEST;
 
-/* Indicator for whether the driver has been initialized yet */
+/* Sentinel for whether the driver has been initialized yet */
 int INIT = 0;
+
+/* Sentinel for whether it's time to close threads */
+int QUIT = 0;
 
 /* Logging toggles */
 int LOG_INFO = 1;
@@ -131,24 +190,35 @@ void init_network_driver(NetworkDevice              *nd,
     /* Track returns and throwaway index */
     int rc, i;
     
+    
+    
     /* Create the FPDS */
     FPDS = create_fpds();
     create_free_packet_descriptors(FPDS, mem_start, mem_length);
     
     log_info("Created FPDS at %p", FPDS);
     
+    
+    
     /* Create the buffers */
-    SND_BUF = createBB(10);    
+    SND_BUF = createBB(SND_SIZE);    
     if (SND_BUF == NULL)
     {
-        log_err("Could not created buffers for sending packets.");
+        log_err("Could not create buffers for sending packets.");
         return;
     }
     
+    log_info("Created SND_BUF at %p", SND_BUF);
+    
+    
     for (i = 0; i < MAX_PID; i++)
     {
-        RCV_BUF[i] = createBB(2);
-        if (RCV_BUF[i] == NULL)
+        /* Initialize both buffer and client PID dummy value */
+        
+        CLIENTS[i] = 0;
+        
+        GET_BUF[i] = createBB(GET_SIZE);
+        if (GET_BUF[i] == NULL)
         {
             log_err("Could not create one of the buffers for "
                      "receiving packets.");
@@ -156,40 +226,115 @@ void init_network_driver(NetworkDevice              *nd,
         }
     }
     
+    log_info("Created GET_BUF at %p", GET_BUF[0]);
+    
+    
+    RCV_TEMP = createBB(RCV_TEMP_SIZE);    
+    if (RCV_TEMP == NULL)
+    {
+        log_err("Could not create buffer for holding received" 
+                "packets.");
+        return;
+    }
+    
+    log_info("Created RCV_TEMP_BUF at %p", RCV_TEMP);
+    
+    
+    RCV_PDS = createBB(RCV_PDS_SIZE);    
+    if (RCV_PDS == NULL)
+    {
+        log_err("Could not create buffer for holding reserved" 
+                "packets for listener.");
+        return;
+    }
+    
+    log_info("Created RCV_PDS_BUF at %p", RCV_PDS);
+    
+    
+    
     /* Store the address of the network device */
+    if (nd == NULL)
+    {
+        log_err("Address of Network Device was null");
+        return;
+    }
+    
     ND = nd;
+    
+    log_info("Set ND to %p", ND);
+    
+    
     
     /* Initialize the packet descriptor waiting for the network */
     rc = nonblocking_get_pd(FPDS, &DEST);
     if(!rc)
     {
-        log_err("Could not retrieve initial packet from FPDS.");
+        log_err("Could not retrieve initial packet from FPDS");
         return;
     }
+    
+    log_info("Retrieved initial packet from FPDS");
+    
+    
     
     /* Register that packet descriptor with the network device */
     init_packet_descriptor(DEST);
     register_receiving_packetdescriptor(ND, DEST);
     
+    log_info("Registered initial packet for reception");
+    
+    
+    
     /* Spin up the threads */
-    rc = pthread_create(SND, NULL, snd_func, NULL);
+    rc = pthread_create(&SND, NULL, &snd_func, NULL);
     if (rc)
     {
-        log_err("Could not create sending thread: returned %d;", rc);
+        log_err("Could not create sending thread: returned %d", rc);
         return;
     } 
     
-    rc = pthread_create(RCV, NULL, rcv_func, NULL);
+    log_info("Spun up SND thread");
+    
+    
+    rc = pthread_create(&RCV_LISTEN, NULL, &rcv_listen, NULL);
     if (rc)
     {
-        log_err("Could not create receiving thread: returned %d;", rc);
+        log_err("Could not create listening thread: code %d;", rc);
         return;
     }
     
-    /* Everything appears to be in working order, so return */
+    log_info("Spun up RCV_LISTEN thread");
+    
+    
+    rc = pthread_create(&RCV_PROCESS, NULL, &rcv_process, NULL);
+    if (rc)
+    {
+        log_err("Could not create processing thread: code %d;", rc);
+        return;
+    }
+    
+    log_info("Spun up RCV_PROCESS thread");
+    
+    
+    rc = pthread_create(&RCV_UPKEEP, NULL, &rcv_upkeep, NULL);
+    if (rc)
+    {
+        log_err("Could not create upkeep thread: code %d;", rc);
+        return;
+    }
+    
+    log_info("Spun up RCV_UPKEEP thread");
+    
+    
+    /* TODO: Ton of repetition here. Move to functions if time 
+       allows. Was OK with early, simpler iterations, but bloated 
+       now. */
+    
+    
+    /* Everything appears to be in working order, so finalize */
     *fpds = FPDS;
+    atexit(cleanup);
     INIT = 1;
-    return;
 }
 
 /*
@@ -201,14 +346,13 @@ void init_network_driver(NetworkDevice              *nd,
  *         A pointer to the packet descriptor to send through the 
  *         network device. The call will fail if NULL.
  */
-void blocking_send_packet(PacketDescriptor *pd)
+void blocking_send_packet(UNUSED PacketDescriptor *pd)
 {
     if (!INIT)
     {
         log_err("Did not initialize driver!");
         return;
     }
-    
     
 }
 
@@ -229,12 +373,12 @@ void blocking_send_packet(PacketDescriptor *pd)
  *         Indicates that the packet could not be queued to send onto
  *         the network for some reason. 
  */
-int nonblocking_send_packet(PacketDescriptor *pd)
+int nonblocking_send_packet(UNUSED PacketDescriptor *pd)
 {
     if (!INIT)
     {
         log_err("Did not initialize driver!");
-        return;
+        return 1;
     }
     
     return 1;
@@ -242,7 +386,7 @@ int nonblocking_send_packet(PacketDescriptor *pd)
 
 /*
  * Retrieves a packet for the caller, blocking it until a packet for
- * them appears in the RCV_BUF.
+ * them appears in the GET_BUF.
  * 
  * PARAMS: 
  *     PacketDescriptor **pd
@@ -250,7 +394,7 @@ int nonblocking_send_packet(PacketDescriptor *pd)
  *     PID pid
  *         The PID of the application seeking a packet. 
  */
-void blocking_get_packet(PacketDescriptor **pd, PID pid)
+void blocking_get_packet(UNUSED PacketDescriptor **pd, UNUSED PID pid)
 {
     if (!INIT)
     {
@@ -280,12 +424,12 @@ void blocking_get_packet(PacketDescriptor **pd, PID pid)
  *         Indicates that no packet for the process was found, or the
  *         call otherwise failed.
  */
-int nonblocking_get_packet(PacketDescriptor **pd, PID pid)
+int nonblocking_get_packet(UNUSED PacketDescriptor **pd, UNUSED PID pid)
 {
     if (!INIT)
     {
         log_err("Did not initialize driver!");
-        return;
+        return 1;
     }
     
     return 1;
@@ -296,18 +440,166 @@ int nonblocking_get_packet(PacketDescriptor **pd, PID pid)
 /*-----------------------------------------------------------------*/
 
 /*
+ * Find which index a client occupies for the array of clients and 
+ * the array of bounded buffers containing the processes for them.
  * 
+ * If it finds a value of 0 in the CLIENTS[] array instead, it 
+ * instantiates that PID into CLIENTS[]. 
+ * 
+ * PARAMS:
+ *     PID pid
+ *         The PID of the client application.
+ * 
+ * RETURN:
+ *     0 <= r < MAX_PID
+ *         The index linking the CLIENTS[] to their GET_BUF[].
+ *     -1 
+ *         The call failed for some reason, likely due to a bad PID.
  */
-void *snd_func(void *args)
+int find_client(PID pid)
 {
+    /* The index */
+    int i; 
+    
+    for (i = 0; i < MAX_PID; i++)
+    {
+        if (CLIENTS[i] == 0)
+        {
+            /* Empty spaces - fill with new client */
+            CLIENTS[i] = pid;
+            return i;
+        } 
+        else if (CLIENTS[i] == pid) 
+        {
+            /* Found the client */
+            return i;
+        }
+    }
+    
+    /* Found neither empty space nor the client - failure */
+    return -1;
+}
+
+/*
+ * Function tethered to the SND thread
+ */
+void *snd_func(UNUSED void *args)
+{
+    /* Track failed attempts to send */
+    int attempts = 1;
+    
+    /* Take items from the SND_BUF and pass them to the network */
+    while (!QUIT)
+    {
+        /* Wait for the next packet */
+        PacketDescriptor *pd = 
+            (PacketDescriptor *) blockingReadBB(SND_BUF);
+        
+        /* Try to send the packet three times */
+        while(attempts < 3)
+        {
+            send_packet(ND, pd);
+            attempts++;
+        }
+        
+        /* Interpret the results */
+        if (attempts == 3)
+        {
+            log_info("Successfully sent packet %p after %d tries",
+                     pd,
+                     attempts);
+        } 
+        else 
+        {
+            log_err("Failed to send packet %p after %d tries", 
+                    pd, 
+                    attempts);
+        }
+        
+        /* Return packet descriptor to the FPDS */
+        blocking_put_pd(FPDS, pd);
+    }
+    
+    /* QUIT has been set, so return to rejoin parent */
     return NULL;
 }
 
 /*
- * 
+ * Function tethered to the RCV_LISTEN thread
  */
-void *rcv_func(void *args)
+void *rcv_listen(UNUSED void *args)
 {
+    /* Constantly listen to the network for incoming packets */
+    while (!QUIT)
+    {
+        await_incoming_packet(ND);
+        
+        /* DEVNOTE: KEEP THIS FAST AS POSSIBLE! */
+       
+        if (nonblockingWriteBB(RCV_TEMP, DEST) == 0)
+        {
+            /* Writing incoming packet failed, scrub DEST */
+            init_packet_descriptor(DEST);
+        } 
+        else 
+        {
+            /* TODO: Replace blocking mechanism w/ nonblocking but
+               without losing reliability *somehow* */
+            DEST = blockingReadBB(RCV_PDS);
+        }
+    }
+    
+    return NULL;
+}
+
+/*
+ * Function tethered to the RCV_PROCESS thread
+ */
+void *rcv_process(UNUSED void *args)
+{
+    /* Look for and sort any items in the RCV_TEMP buffer */
+    while (!QUIT)
+    {
+        /* Grab the packet from the intermediate buffer */
+        PacketDescriptor *pd = 
+            (PacketDescriptor *) blockingReadBB(RCV_TEMP);
+        
+        /* Get its PID to find the right buffer to write to */
+        PID pid = packet_descriptor_get_pid(pd);
+        int client_index = find_client(pid);
+        BoundedBuffer *bb = GET_BUF[client_index];
+        
+        /* If write fails, overwrite oldest */
+        while (nonblockingWriteBB(bb, pd) == 0)
+        {
+            /* Grab the oldest packet */
+            PacketDescriptor *temp = 
+                (PacketDescriptor *) blockingReadBB(bb);
+            
+            /* Return 'dropped' packet to FPDS */
+            blocking_put_pd(FPDS, temp);
+            
+            /* Terminate loop, let while conditional handle it */
+        }
+    }
+    
+    return NULL;
+}
+
+/*
+ * Function tethered to the RCV_UPKEEP thread
+ */
+void *rcv_upkeep(UNUSED void *args)
+{
+    /* Constantly try to add new packets from FPDS to RCV_PDS */
+    while (!QUIT)
+    {
+        PacketDescriptor *pd = NULL;
+        blocking_get_pd(FPDS, &pd);
+        init_packet_descriptor(pd);
+        blockingWriteBB(RCV_PDS, pd);
+    }
+    
     return NULL;
 }
 
@@ -325,9 +617,9 @@ void *rcv_func(void *args)
  *         Any items that are to be parsed into the printed line as
  *         indicated by the format.
  * 
- * TODO: Make sure the printing is atomic as a whole with a mutex.
+ * TODO: Make sure the printing is atomic as a whole (mutex stuff?)
  *       Might be threads that need to print to the same log at the
- *       same time, and would interleave.
+ *       same time, and would interleave. Fix that sometime.
  */
 void log_info(const char *format, ...)
 {
@@ -337,7 +629,7 @@ void log_info(const char *format, ...)
     va_list argptr;
     va_start(argptr, format);
     
-    fprintf(stdout,"INFO :\n");
+    fprintf(stdout,"DRIVER | INFO : ");
     vfprintf(stdout,format, argptr);
     fprintf(stdout,"\n");
     
@@ -358,9 +650,7 @@ void log_info(const char *format, ...)
  *         Any items that are to be parsed into the printed line as
  *         indicated by the format.
  * 
- * TODO: Make sure the printing is atomic as a whole with a mutex.
- *       Might be threads that need to print to the same log at the
- *       same time, and would interleave.
+ * TODO: Same as log_info.
  */
 void log_err(const char *format, ...)
 {
@@ -370,9 +660,43 @@ void log_err(const char *format, ...)
     va_list argptr;
     va_start(argptr, format);
     
-    fprintf(stderr,"ERROR :\n");
+    fprintf(stderr,"DRIVER | ERROR : ");
     vfprintf(stderr,format, argptr);
     fprintf(stderr,"\n");
     
     va_end(argptr);
+}
+
+/*
+ * Cleanup function to be called on exiting. Sweeps the threads and
+ * heap-allocated items if present.
+ */
+void cleanup()
+{
+    /* Throwaway index for looping */
+    int i;
+    
+    /* Set the quitting time sentinel to make threads terminate */
+    QUIT = 1;
+    
+    /* Join the threads */
+    pthread_join(SND, NULL);
+    pthread_join(RCV_LISTEN, NULL);
+    pthread_join(RCV_PROCESS, NULL);
+    pthread_join(RCV_UPKEEP, NULL);
+    
+    /* Clean the bounded buffers */
+    destroyBB(SND_BUF);
+    destroyBB(RCV_TEMP);
+    destroyBB(RCV_PDS);
+    for (i = 0; i < MAX_PID; i++)
+    {
+        destroyBB(GET_BUF[i]);
+    }
+    
+    /*
+     * DEVNOTE: Here would be a perfect place to destroy the FPDS if
+     * necessary, but we pass it back in init_network_driver() so 
+     * other programs might still be using it.
+     */
 }
