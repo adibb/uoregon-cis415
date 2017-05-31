@@ -510,10 +510,7 @@ int find_client(PID pid)
  * Function tethered to the SND thread
  */
 void *snd_func(UNUSED void *args)
-{
-    /* Track failed attempts to send */
-    int attempts = 1;
-    
+{    
     /* Take items from the SND_BUF and pass them to the network */
     while (!QUIT)
     {
@@ -522,14 +519,16 @@ void *snd_func(UNUSED void *args)
             (PacketDescriptor *) blockingReadBB(SND_BUF);
         
         /* Try to send the packet three times */
-        while(attempts < 3)
+        int attempts = 0
+        int rc = 0;
+        while((attempts < 5) && (rc == 0))
         {
-            send_packet(ND, pd);
+            rc = send_packet(ND, pd);
             attempts++;
         }
         
         /* Interpret the results */
-        if (attempts == 3)
+        if (rc == 1)
         {
             log_info("Successfully sent packet %p after %d tries",
                      pd,
