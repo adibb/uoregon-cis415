@@ -1,13 +1,19 @@
 /*
  * Author: Alexander Dibb
- * Version: 1.0
- * Last Edited: 5/26/2017
+ * Login: adibb
+ * Assignment: CIS 415 Project 2
+ * Last Edited: 5/30/2017
  * 
  * Driver interface for the network device and student solution for 
  * the NetworkDriver project for Spring the 2017 class of CIS 415. 
  * 
  * (De)multiplexor for a simulated network. Enables both blocking
  * and nonblocking versions of packet send and receive. 
+ * 
+ * This is my own work, save for the logging functionality. That is
+ * base off of the work of Mr. Roscoe Casita, the TA. He provided the
+ * code as part of Lab 7 and I altered it only slightly for my own 
+ * use here.
  */
 
 /*-----------------------------------------------------------------*/
